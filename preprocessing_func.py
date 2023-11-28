@@ -1,7 +1,7 @@
 import pandas as pd
 import geopandas as gpd
 
-def process_places_data(path: str) -> gpd.GeoDataFrame:
+def process_places(path: str) -> gpd.GeoDataFrame:
     """Reads a vector layer containing places locations and information and 
        processes that into a geojson layer ready to be manipulated by the Geopandas library.
 
@@ -18,13 +18,10 @@ def process_places_data(path: str) -> gpd.GeoDataFrame:
     
     points_gdf = gdf_places[gdf_places['classname'].isin(['Pubs, Bars and Inns', 'Cafes, Snack Bars and Tea Rooms', ])][['name', 'classname', 'street_name', 'postcode', 'url', 'geometry']]\
                      .to_crs(epsg=4326).reset_index(drop=True)
-
-    # Step 3: Convert to GeoJSON (assuming your gdf is not empty)
-    places_geojson = points_gdf.to_json()
     
-    return places_geojson
+    return points_gdf
 
-def process_neighborhoods(path: str) -> gpd.GeoDataFrame:
+def process_zones(path: str) -> gpd.GeoDataFrame:
     """_summary_
 
     Args:
@@ -34,8 +31,7 @@ def process_neighborhoods(path: str) -> gpd.GeoDataFrame:
         gpd.GeoDataFrame: GeoDataFrame with the right CRS and filtered to only include the neighborhoods of interest
     """
     
-    polygons_gdf = gpd.read_file(path)[['POSTCODE', 'geometry']].to_crs(epsg=4326).reset_index(drop=True)
-    polygons_gdf = polygons_gdf[polygons_gdf['POSTCODE'].str.startswith('CB')]
+    polygons_gdf = gpd.read_file(path)[['lsoa11nmw', 'geometry']].to_crs(epsg=4326).reset_index(drop=True)
     
     return polygons_gdf
 
@@ -54,12 +50,32 @@ def create_choropleth_data(points_gdf: gpd.GeoDataFrame, polygons_gdf: gpd.GeoDa
     points_in_polygons = gpd.sjoin(points_gdf, polygons_gdf, how='inner', op='within').reset_index(drop=True)
     
     # Step 2: Group by postcode and count
-    points_in_polygons = points_in_polygons.groupby(['classname', 'POSTCODE']).size().reset_index(name='counts').sort_values(by='counts', ascending=False).reset_index(drop=True)
+    counts_df = points_in_polygons.groupby(['classname', 'lsoa11nmw']).size().reset_index(drop=False).rename(columns={0:'count'})
     
     # Step 3: Merge with polygons_gdf
-    choropleth_gdf = polygons_gdf.merge(points_in_polygons, on='POSTCODE', how='inner')
+    choropleth_gdf = pd.merge(polygons_gdf, counts_df, how='inner', on='lsoa11nmw')
     
     return choropleth_gdf
+
+def filter_datasets(points_gdf: gpd.GeoDataFrame, choropleth_gdf: gpd.GeoDataFrame) -> dict[gpd.GeoDataFrame]:
+    """Generates a dictionary with filtered datasets for cafes and bars
+
+    Args:
+        points_gdf (gpd.GeoDataFrame): a geopandas dataframe with the points data
+        choropleth_gdf (gpd.GeoDataFrame): a geopandas dataframe with the choropleth data
+
+    Returns:
+        dict[gpd.GeoDataFrame]: a dictionary with four geopandas dataframes filtered according to classname
+    """    
+    
+    cafe_gdf = points_gdf[points_gdf['classname'] == 'Cafes, Snack Bars and Tea Rooms']
+    bar_gdf = points_gdf[points_gdf['classname'] == 'Pubs, Bars and Inns']
+
+    cafe_choropleth_gdf = choropleth_gdf[choropleth_gdf['classname'] == 'Cafes, Snack Bars and Tea Rooms']
+    bar_choropleth_gdf = choropleth_gdf[choropleth_gdf['classname'] == 'Pubs, Bars and Inns']
+    
+    return {'cafe_gdf': cafe_gdf, 'bar_gdf': bar_gdf, 'cafe_choropleth_gdf': cafe_choropleth_gdf, 'bar_choropleth_gdf': bar_choropleth_gdf}
+
 
 def create_popup_html(name: str, address: str, url: str) -> str:
     """Generates HTML code for the popup
